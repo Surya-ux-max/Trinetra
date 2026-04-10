@@ -18,6 +18,9 @@ app = FastAPI()
 
 os.makedirs(FRAMES_DIR, exist_ok=True)
 
+# Clear stale alert history from previous sessions on startup
+redis_client.delete("alert_history")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -65,7 +68,7 @@ async def start_stream(sector_id: str, payload: StreamPayload):
     if sector_states[sector_id]["active"]:
         return {"status": "error", "message": f"{sector_id} is already active"}
     import asyncio
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()  # correct — gets the actual running event loop
     location = SECTORS[sector_id]
     start_live_stream(sector_id, payload.url, location, loop, manager.broadcast)
     return {"status": "started", "sector": sector_id, "url": payload.url}
@@ -79,8 +82,8 @@ async def stop_stream(sector_id: str):
     return {"status": "stopped", "sector": sector_id}
 
 
-def _mjpeg_generator(sector_id: str):
-    import time as _time
+async def _mjpeg_generator(sector_id: str):
+    import asyncio
     while True:
         frame = live_frames.get(sector_id)
         if frame:
@@ -90,7 +93,7 @@ def _mjpeg_generator(sector_id: str):
                 b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n" +
                 frame + b"\r\n"
             )
-        _time.sleep(0.05)  # ~20 fps cap
+        await asyncio.sleep(0.05)  # non-blocking ~20fps
 
 
 @app.get("/live/{sector_id}")

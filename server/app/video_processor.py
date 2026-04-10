@@ -82,22 +82,24 @@ def compute_confidence(objects: list, analysis: str) -> tuple:
 
 def _run_live_stream(sector_id: str, stream_url: str, location: str, loop, broadcast_fn):
     """Runs in a background thread — reads RTSP/webcam frames continuously."""
-    import app.motion_detection as md
+    from app.motion_detection import detect_motion, reset_sector
 
     state = sector_states[sector_id]
     state.update({"active": True, "progress": 0, "detections": 0, "status": "live", "threat": "NONE"})
 
+    reset_sector(sector_id)  # clear stale frame for this sector
+
     cap = cv2.VideoCapture(stream_url)
     if not cap.isOpened():
+        print(f"[{sector_id}] ERROR: Cannot open stream: {stream_url}")
         state.update({"active": False, "status": "error"})
         return
 
-    # Reduce RTSP buffer to minimize latency
+    print(f"[{sector_id}] Stream opened: {stream_url}")
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    md.previous_frame = None
 
     last_sample = 0
-    SAMPLE_INTERVAL = 2  # seconds between detection runs
+    SAMPLE_INTERVAL = 2
 
     os.makedirs(FRAMES_DIR, exist_ok=True)
 
@@ -107,7 +109,6 @@ def _run_live_stream(sector_id: str, stream_url: str, location: str, loop, broad
             time.sleep(0.1)
             continue
 
-        # Always store latest frame for MJPEG feed
         _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
         live_frames[sector_id] = jpeg.tobytes()
 
@@ -116,7 +117,7 @@ def _run_live_stream(sector_id: str, stream_url: str, location: str, loop, broad
             continue
         last_sample = now
 
-        if not detect_motion(frame):
+        if not detect_motion(frame, sector_id):  # pass sector_id
             continue
 
         objects = detect_objects(frame)
@@ -153,6 +154,7 @@ def _run_live_stream(sector_id: str, stream_url: str, location: str, loop, broad
 
     cap.release()
     live_frames.pop(sector_id, None)
+    reset_sector(sector_id)
     state.update({"active": False, "status": "idle"})
 
 
